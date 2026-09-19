@@ -1,10 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/context/toast-context';
-import { filesApi } from '@/lib/api';
-import { ZentraFile } from '@/lib/types';
+import { filesApi, apiKeysApi } from '@/lib/api';
+import { ZentraFile, ZentraApiKey } from '@/lib/types';
+import { getKeyMaterial, hasKeyMaterial } from '@/lib/key-vault';
 import VideoPlayer from '@/components/ui/video-player';
 import { 
   Database, 
@@ -22,15 +24,24 @@ import {
   AlertTriangle,
   FileCode,
   LayoutGrid,
-  List
+  List,
+  KeyRound,
+  ChevronDown
 } from 'lucide-react';
 
 export default function StoragePage() {
-  const { currentProject } = useAuth();
+  const { currentProject, getIdToken } = useAuth();
   const { toast } = useToast();
 
   const [files, setFiles] = useState<ZentraFile[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // API key selection — uploads us key ke naam se backend me sign hote hain
+  const [apiKeys, setApiKeys] = useState<ZentraApiKey[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [selectedKey, setSelectedKey] = useState<ZentraApiKey | null>(null);
+  const [keyMenuOpen, setKeyMenuOpen] = useState(false);
+  const keyMenuRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'video' | 'image' | 'document'>('all');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
@@ -75,28 +86,150 @@ export default function StoragePage() {
     };
   }, [currentProject]);
 
+  // Selected project's active API keys load karo (GET /v1/projects/{id}/keys)
+  useEffect(() => {
+    const targetPid = currentProject?.project_id || currentProject?.id;
+    if (!targetPid) return;
+    let isCancelled = false;
+
+    (async () => {
+      setKeysLoading(true);
+      try {
+        const token = await getIdToken();
+        const res = await apiKeysApi.listKeys(targetPid, token || '');
+        const active = (res.keys || []).filter((k) => !k.revoked);
+        if (isCancelled) return;
+        setApiKeys(active);
+
+        // Pichli session ki selected key restore karo (agar abhi bhi active hai)
+        let savedId: string | null = null;
+        try {
+          savedId = localStorage.getItem(`zg_storage_key_${targetPid}`);
+        } catch {}
+
+        setSelectedKey((prev) => {
+          const prevValid = prev
+            ? active.find((k) => (k.key_id || k.id) === (prev.key_id || prev.id))
+            : null;
+          if (prevValid) return prevValid;
+          const restored = savedId
+            ? active.find((k) => (k.key_id || k.id) === savedId)
+            : null;
+          return restored || null;
+        });
+      } catch (err) {
+        if (!isCancelled) console.warn('API keys fetch error', err);
+      } finally {
+        if (!isCancelled) setKeysLoading(false);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentProject, getIdToken]);
+
+  // Selected key ka secret milte hi files ko usi key se reload karo (GET /v1/files)
+  useEffect(() => {
+    if (!selectedKey) return;
+    const material = getKeyMaterial(selectedKey);
+    if (material?.plaintext) {
+      (async () => {
+        setLoading(true);
+        try {
+          const res = await filesApi.listFiles(material.plaintext);
+          setFiles(res.files || []);
+        } catch (err) {
+          console.warn('Files fetch error', err);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedKey]);
+
+  // Dropdown outside-click pe band karo
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (keyMenuRef.current && !keyMenuRef.current.contains(e.target as Node)) {
+        setKeyMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  const selectKey = (key: ZentraApiKey) => {
+    const targetPid = currentProject?.project_id || currentProject?.id;
+    setSelectedKey(key);
+    setKeyMenuOpen(false);
+    try {
+      if (targetPid) {
+        localStorage.setItem(`zg_storage_key_${targetPid}`, key.key_id || key.id);
+      }
+    } catch {}
+    if (!hasKeyMaterial(key)) {
+      toast.warning(
+        'Key secret is device par nahi',
+        'Ye key is browser par nahi bani thi. Upload ke liye nayi key banayein — nayi key yahan save ho jayegi.'
+      );
+    }
+  };
+
+  const triggerUpload = () => {
+    if (!selectedKey) {
+      toast.warning(
+        'Pehle API key select karein',
+        'Upload Object ke bagal wale API Keys button se key choose karein — upload usi key ke naam se backend me log hoga.'
+      );
+      setKeyMenuOpen(true);
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
   const handleFilesUpload = async (filesList: FileList | null) => {
     if (!filesList || filesList.length === 0) return;
+
+    // Upload ke liye API key zaroori hai — backend usi key se attribution karta hai
+    if (!selectedKey) {
+      toast.warning(
+        'Pehle API key select karein',
+        'Upload Object ke bagal wale API Keys button se key choose karein — upload usi key ke naam se backend me log hoga.'
+      );
+      setKeyMenuOpen(true);
+      return;
+    }
+
+    const material = getKeyMaterial(selectedKey);
+    if (!material?.plaintext) {
+      toast.error(
+        'Key secret available nahi hai',
+        'Plaintext sirf key banane ke waqt ek baar milta hai aur yahan save hota hai. Is key se upload ke liye nayi key banayein.'
+      );
+      return;
+    }
 
     setUploading(true);
     setUploadProgress(15);
     try {
-      const progressTimer = setInterval(() => {
-        setUploadProgress((p) => (p < 85 ? p + 15 : p));
-      }, 150);
-
-      // Upload files sequentially or first file
+      // Multiple files ko sequentially upload karo — asli key se signed
       for (let i = 0; i < filesList.length; i++) {
         const file = filesList[i];
-        const uploaded = await filesApi.uploadFile(file, 'ZTG_live_dashboard_session');
+        const uploaded = await filesApi.uploadFile(file, material.plaintext, (percent) => {
+          setUploadProgress(percent);
+        });
         setFiles((prev) => [uploaded, ...prev]);
       }
 
-      clearInterval(progressTimer);
       setUploadProgress(100);
-      toast.success('Upload Completed', `${filesList.length} object(s) ingested into /v1/files.`);
+      toast.success(
+        'Upload Completed',
+        `${filesList.length} object(s) uploaded with key "${selectedKey.name || 'API key'}" via POST /v1/files.`
+      );
     } catch (err: any) {
-      toast.error('Upload Failed', err?.message || 'Check network connection or token.');
+      toast.error('Upload Failed', err?.message || 'Check network connection or API key permissions.');
     } finally {
       setTimeout(() => {
         setUploading(false);
@@ -107,9 +240,21 @@ export default function StoragePage() {
 
   const handleDelete = async () => {
     if (!deleteCandidate) return;
+
+    // DELETE /v1/files/{id} bhi same developer API hai — selected key se signed
+    const material = selectedKey ? getKeyMaterial(selectedKey) : null;
+    if (!material?.plaintext) {
+      toast.error(
+        'API key required',
+        'Delete request bhi API key se sign hoti hai. Pehle upleft wale API Keys button se valid key select karein.'
+      );
+      setDeleteCandidate(null);
+      return;
+    }
+
     setDeleting(true);
     try {
-      await filesApi.deleteFile(deleteCandidate.id);
+      await filesApi.deleteFile(deleteCandidate.id, material.plaintext);
       setFiles((prev) => prev.filter((f) => f.id !== deleteCandidate.id));
       toast.info('Object Deleted', `File "${deleteCandidate.name}" removed from cluster.`);
       setDeleteCandidate(null);
@@ -159,13 +304,110 @@ export default function StoragePage() {
           </p>
         </div>
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="liquid-glass px-4 py-2.5 rounded-xl border border-[#FF4FD8]/60 text-xs font-semibold text-white bg-gradient-to-r from-[#FF4FD8] to-[#FF2FB3] hover:opacity-95 shadow-[0_0_20px_rgba(255,79,216,0.3)] transition-all flex items-center gap-2 self-start"
-        >
-          <UploadCloud className="w-4 h-4" />
-          <span>Upload Object</span>
-        </button>
+        <div className="flex items-center gap-2.5 self-start">
+          {/* API Key selector — upload isi key ke naam se sign hota hai */}
+          <div className="relative" ref={keyMenuRef}>
+            <button
+              onClick={() => setKeyMenuOpen((open) => !open)}
+              className={`liquid-glass px-3.5 py-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-all ${
+                selectedKey
+                  ? 'border-[#FF4FD8]/50 text-white shadow-[0_0_16px_rgba(255,79,216,0.15)]'
+                  : 'border-white/15 text-slate-300 hover:text-white hover:border-[#FF4FD8]/40'
+              }`}
+              title={selectedKey ? `Uploads signed with key…${selectedKey.key_hint}` : 'Select the API key used for uploads'}
+            >
+              <KeyRound className={`w-3.5 h-3.5 ${selectedKey ? 'text-[#FF9BE8]' : 'text-[#FF4FD8]'}`} />
+              {selectedKey ? (
+                <>
+                  <span className="max-w-[110px] truncate">{selectedKey.name || 'Unnamed Key'}</span>
+                  <span className="font-mono text-[10px] text-slate-400">…{selectedKey.key_hint}</span>
+                </>
+              ) : (
+                <span>API Keys</span>
+              )}
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${keyMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {keyMenuOpen && (
+              <div className="absolute right-0 mt-2 w-72 z-40 rounded-2xl border border-white/10 bg-[#0B0D14]/95 backdrop-blur-xl shadow-2xl shadow-black/60 p-1.5 animate-fade-in">
+                <div className="px-3 pt-2 pb-1.5 text-[10px] font-mono uppercase tracking-[0.14em] text-slate-500">
+                  Active keys — uploads inke naam se log honge
+                </div>
+
+                <div className="max-h-60 overflow-y-auto">
+                  {keysLoading ? (
+                    <div className="px-3 py-2.5 text-xs text-slate-400 flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full border-2 border-[#FF4FD8]/30 border-t-[#FF4FD8] animate-spin" />
+                      Loading keys…
+                    </div>
+                  ) : apiKeys.length === 0 ? (
+                    <div className="px-3 py-2.5 text-xs text-slate-400 leading-relaxed">
+                      Is project ki koi active key nahi hai. Upload ke liye pehle ek key banayein.
+                    </div>
+                  ) : (
+                    apiKeys.map((k) => {
+                      const kid = k.key_id || k.id;
+                      const secretOk = hasKeyMaterial(kid);
+                      const isActive = (selectedKey?.key_id || selectedKey?.id) === kid;
+                      return (
+                        <button
+                          key={kid}
+                          onClick={() => selectKey(k)}
+                          className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-left transition-colors ${
+                            isActive
+                              ? 'bg-[#FF4FD8]/10 border border-[#FF4FD8]/30'
+                              : 'border border-transparent hover:bg-white/5'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2 min-w-0">
+                            <KeyRound className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-[#FF9BE8]' : 'text-[#FF4FD8]'}`} />
+                            <span className="text-xs font-medium text-white truncate">{k.name || 'Unnamed Key'}</span>
+                          </span>
+                          <span className="flex items-center gap-1.5 shrink-0">
+                            <span className="font-mono text-[10px] text-slate-500">…{k.key_hint}</span>
+                            {secretOk ? (
+                              <Check className="w-3 h-3 text-emerald-400" />
+                            ) : (
+                              <AlertTriangle className="w-3 h-3 text-amber-400" />
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                {!keysLoading && apiKeys.some((k) => !hasKeyMaterial(k)) && (
+                  <p className="px-3 pt-1.5 pb-1 text-[10px] text-amber-400/90 leading-snug border-t border-white/5">
+                    <AlertTriangle className="w-2.5 h-2.5 inline-block mr-1 -mt-0.5" />
+                    ka secret is device par nahi hai — us key se upload nahi hoga; nayi key banayein.
+                  </p>
+                )}
+
+                <div className="border-t border-white/10 mt-1 pt-1">
+                  <Link
+                    href="/dashboard/api-keys"
+                    onClick={() => setKeyMenuOpen(false)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-[#FF9BE8] hover:bg-white/5 transition-colors"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>Create / manage keys</span>
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={triggerUpload}
+            disabled={uploading}
+            className="liquid-glass px-4 py-2.5 rounded-xl border border-[#FF4FD8]/60 text-xs font-semibold text-white bg-gradient-to-r from-[#FF4FD8] to-[#FF2FB3] hover:opacity-95 shadow-[0_0_20px_rgba(255,79,216,0.3)] transition-all flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            title={selectedKey ? `Upload with key "${selectedKey.name || 'API key'}"` : 'Select an API key first'}
+          >
+            <UploadCloud className="w-4 h-4" />
+            <span>Upload Object</span>
+          </button>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -187,7 +429,7 @@ export default function StoragePage() {
           setDragOver(false);
           handleFilesUpload(e.dataTransfer.files);
         }}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={triggerUpload}
         className={`liquid-glass p-8 rounded-3xl border-2 border-dashed text-center cursor-pointer transition-all ${
           dragOver
             ? 'border-[#FF4FD8] bg-[#FF4FD8]/10 scale-[1.01]'
