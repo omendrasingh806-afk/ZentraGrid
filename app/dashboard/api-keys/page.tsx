@@ -5,6 +5,7 @@ import { useAuth } from '@/context/auth-context';
 import { useToast } from '@/context/toast-context';
 import { apiKeysApi } from '@/lib/api';
 import { ZentraApiKey } from '@/lib/types';
+import { saveKeyMaterial, removeKeyMaterial } from '@/lib/key-vault';
 import CodeBlock from '@/components/ui/code-block';
 import { 
   KeyRound, 
@@ -100,6 +101,13 @@ export default function ApiKeysPage() {
       setCreateModalOpen(false);
       setKeyName('');
 
+      // Plaintext sirf abhi available hai — locally save karo taaki dashboard
+      // is key se authenticated uploads (POST /v1/files) kar sake.
+      saveKeyMaterial(newKey.key_id || newKey.id, plaintext, {
+        name: newKey.name,
+        project_id: newKey.project_id,
+      });
+
       // Open ONE-TIME plaintext reveal modal
       setRevealedKey({
         name: newKey.name || keyName.trim() || 'API Key',
@@ -124,6 +132,7 @@ export default function ApiKeysPage() {
       const token = await getIdToken();
       const targetKeyId = revokeCandidate.key_id || revokeCandidate.id;
       await apiKeysApi.revokeKey(targetPid, targetKeyId, token || '');
+      removeKeyMaterial(targetKeyId);
       setKeys((prev) => prev.filter((k) => k.id !== targetKeyId && k.key_id !== targetKeyId));
       toast.info('API Key Revoked', `Key "${revokeCandidate.name || 'API Key'}" has been permanently deactivated.`);
       setRevokeCandidate(null);
