@@ -13,6 +13,7 @@ import {
   ApiError,
 } from '@/lib/api';
 import { formatBytes, formatRelativeTime, getQuotaColor } from '@/lib/formatters';
+import { saveKeyMaterial, removeKeyMaterial } from '@/lib/key-vault';
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { ApiKeyCreatedModal } from '@/components/api-key-created-modal';
 import { ProjectIntegrationSnippets } from '@/components/project-integration-snippets';
@@ -154,6 +155,14 @@ export default function ProjectDetailPage() {
       setKeys((prev) => [result.key, ...prev]);
       setIsCreateKeyOpen(false);
       setNewKeyName('');
+
+      // Save plaintext locally — dobara kabhi available nahi hogi (sirf yahi
+      // secret hai jisse uploads is key ke naam se sign hote hain).
+      saveKeyMaterial(result.key?.key_id, result.api_key, {
+        name: result.key?.name,
+        project_id: projectId,
+      });
+
       // Show one-time plaintext modal
       setCreatedKeyResult(result);
     } catch (err: unknown) {
@@ -170,6 +179,7 @@ export default function ProjectDetailPage() {
     await executeWithAuth(async (token) =>
       api.keys.revoke(token, projectId, keyToRevoke.key_id)
     );
+    removeKeyMaterial(keyToRevoke.key_id);
 
     setKeys((prev) =>
       prev.map((k) => (k.key_id === keyToRevoke.key_id ? { ...k, revoked: true } : k))
