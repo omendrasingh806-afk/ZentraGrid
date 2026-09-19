@@ -26,7 +26,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   {
-    name: 'Projects',
+    name: 'Analysis',
     href: '/dashboard',
     icon: FolderKanban,
     isActive: (p) => p === '/dashboard' || p.startsWith('/dashboard/projects'),
