@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/auth-context';
-import { useToast } from '@/context/toast-context';
 import { filesApi, projectsApi, usageApi } from '@/lib/api';
 import { ZentraFile, ProjectUsage } from '@/lib/types';
 import VideoPlayer from '@/components/ui/video-player';
@@ -14,7 +13,6 @@ import {
   KeyRound, 
   ArrowUpRight, 
   Plus, 
-  UploadCloud, 
   Film, 
   FileText, 
   Download, 
@@ -28,13 +26,10 @@ import {
 
 export default function DashboardOverviewPage() {
   const { currentProject, user, getIdToken } = useAuth();
-  const { toast } = useToast();
 
   const [files, setFiles] = useState<ZentraFile[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [usage, setUsage] = useState<ProjectUsage | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedVideo, setSelectedVideo] = useState<ZentraFile | null>(null);
 
   // Load files & telemetry
@@ -73,34 +68,6 @@ export default function DashboardOverviewPage() {
     };
   }, [currentProject, getIdToken]);
 
-  // Quick file upload
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    setUploadProgress(10);
-    try {
-      const interval = setInterval(() => {
-        setUploadProgress((p) => (p < 85 ? p + 15 : p));
-      }, 150);
-
-      const uploaded = await filesApi.uploadFile(file, 'ZTG_live_dashboard_session');
-      clearInterval(interval);
-      setUploadProgress(100);
-
-      setFiles((prev) => [uploaded, ...prev]);
-      toast.success('File Uploaded Successfully', `${uploaded.name} (${(uploaded.size / (1024 * 1024)).toFixed(1)} MB) stored.`);
-    } catch (err: any) {
-      toast.error('Upload Failed', err?.message || 'Check storage connection or file size.');
-    } finally {
-      setTimeout(() => {
-        setUploading(false);
-        setUploadProgress(0);
-      }, 500);
-    }
-  };
-
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -135,47 +102,7 @@ export default function DashboardOverviewPage() {
             <span className="font-mono text-xs text-slate-500">({currentProject?.id || 'prj_prod'})</span>
           </p>
         </div>
-
-        <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard/api-keys"
-            className="liquid-glass px-3.5 py-2 rounded-xl border border-white/12 hover:border-[#FF4FD8]/50 text-xs font-semibold text-white flex items-center gap-2 transition-all"
-          >
-            <KeyRound className="w-3.5 h-3.5 text-[#FF4FD8]" />
-            <span>Manage Keys</span>
-          </Link>
-
-          <label className="liquid-glass px-4 py-2 rounded-xl border border-[#FF4FD8]/60 text-xs font-semibold text-white bg-gradient-to-r from-[#FF4FD8] to-[#FF2FB3] hover:opacity-95 shadow-[0_0_20px_rgba(255,79,216,0.3)] transition-all flex items-center gap-2 cursor-pointer">
-            <UploadCloud className="w-4 h-4" />
-            <span>Upload Object</span>
-            <input
-              type="file"
-              onChange={handleFileUpload}
-              disabled={uploading}
-              className="hidden"
-            />
-          </label>
-        </div>
       </div>
-
-      {/* Upload Progress feedback banner */}
-      {uploading && (
-        <div className="liquid-glass p-4 rounded-2xl border border-[#FF4FD8]/40 bg-[#FF4FD8]/5">
-          <div className="flex items-center justify-between text-xs font-mono text-white mb-2">
-            <span className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#FF4FD8] animate-ping" />
-              Streaming multipart payload to /v1/files...
-            </span>
-            <span>{uploadProgress}%</span>
-          </div>
-          <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-[#FF4FD8] to-[#67E8F9] rounded-full transition-all duration-200"
-              style={{ width: `${uploadProgress}%` }}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Primary Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
