@@ -7,6 +7,7 @@ import { useToast } from '@/context/toast-context';
 import { filesApi, apiKeysApi } from '@/lib/api';
 import { ZentraFile, ZentraApiKey } from '@/lib/types';
 import { getKeyMaterial, hasKeyMaterial } from '@/lib/key-vault';
+import { prefetchStream } from '@/lib/stream-prefetch';
 import VideoPlayer from '@/components/ui/video-player';
 import { 
   Database, 
@@ -175,6 +176,13 @@ export default function StoragePage() {
         'Ye key is browser par nahi bani thi. Upload ke liye nayi key banayein — nayi key yahan save ho jayegi.'
       );
     }
+  };
+
+  // Hover par backend warm karo + pehla chunk prefetch (perceived speed)
+  const warmStream = (fileId: string) => {
+    const material = selectedKey ? getKeyMaterial(selectedKey) : null;
+    if (!material?.plaintext) return;
+    prefetchStream(filesApi.getStreamUrl(fileId), material.plaintext);
   };
 
   const triggerUpload = () => {
@@ -579,6 +587,7 @@ export default function StoragePage() {
                           {isVideo && (
                             <button
                               onClick={() => setActiveVideoFile(file)}
+                              onMouseEnter={() => warmStream(file.id)}
                               className="px-2.5 py-1 rounded-lg liquid-glass border border-[#FF4FD8]/40 text-[#FF4FD8] hover:bg-[#FF4FD8]/10 text-xs font-semibold flex items-center gap-1 transition-all"
                             >
                               <Play className="w-3 h-3 fill-[#FF4FD8]" />
@@ -660,6 +669,7 @@ export default function StoragePage() {
                     {isVideo && (
                       <button
                         onClick={() => setActiveVideoFile(file)}
+                              onMouseEnter={() => warmStream(file.id)}
                         className="p-1.5 text-[#FF4FD8] hover:bg-[#FF4FD8]/10 rounded-lg"
                         title="Stream"
                       >
