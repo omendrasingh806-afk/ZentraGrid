@@ -696,10 +696,10 @@ export default function StoragePage() {
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <Film className="w-4 h-4 text-[#FF4FD8]" />
-                  HTTP 206 Range Stream: {activeVideoFile.name}
+                  Stream Preview: {activeVideoFile.name}
                 </h3>
                 <span className="text-[10px] font-mono text-slate-400">
-                  Range seek supported directly via backend stream endpoint
+                  Authenticated playback — GET /v1/files/{activeVideoFile.id}/stream
                 </span>
               </div>
               <button
@@ -710,16 +710,35 @@ export default function StoragePage() {
               </button>
             </div>
 
-            <VideoPlayer
-              streamUrl={`https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4`}
-              filename={activeVideoFile.name}
-              mimeType={activeVideoFile.mime_type}
-            />
+            {(() => {
+              // Stream endpoint developer API hai → selected key ka secret chahiye
+              const streamMaterial = selectedKey ? getKeyMaterial(selectedKey) : null;
+              if (!streamMaterial?.plaintext) {
+                return (
+                  <div className="rounded-2xl liquid-glass border border-amber-500/30 bg-amber-500/5 p-6 text-center">
+                    <AlertTriangle className="w-6 h-6 text-amber-400 mx-auto mb-2" />
+                    <p className="text-xs font-semibold text-amber-200">Streaming ke liye valid API key select karein</p>
+                    <p className="text-[11px] text-amber-100/70 mt-1 max-w-md mx-auto leading-relaxed">
+                      Backend GET /v1/files/&#123;id&#125;/stream par API key maangta hai. Upar wale
+                      &quot;API Keys&quot; button se is device par kaam karne wali key choose karein, phir dobara Stream dabayein.
+                    </p>
+                  </div>
+                );
+              }
+              return (
+                <VideoPlayer
+                  streamUrl={filesApi.getStreamUrl(activeVideoFile.id)}
+                  filename={activeVideoFile.name}
+                  mimeType={activeVideoFile.mime_type}
+                  authToken={streamMaterial.plaintext}
+                />
+              );
+            })()}
 
             <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-xs font-mono text-slate-400">
               <span>Endpoint: GET /v1/files/{activeVideoFile.id}/stream</span>
               <button
-                onClick={() => copyToClipboard(`https://api.zentragrid.com/v1/files/${activeVideoFile.id}/stream`, 'Stream URL')}
+                onClick={() => copyToClipboard(filesApi.getStreamUrl(activeVideoFile.id), 'Stream URL')}
                 className="text-[#FF4FD8] hover:underline flex items-center gap-1 font-sans"
               >
                 <Copy className="w-3 h-3" />
