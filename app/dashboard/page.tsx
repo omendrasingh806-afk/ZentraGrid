@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/context/auth-context';
 import { filesApi, projectsApi, usageApi } from '@/lib/api';
 import { ZentraFile, ProjectUsage } from '@/lib/types';
+import { getKeyMaterial } from '@/lib/key-vault';
 import VideoPlayer from '@/components/ui/video-player';
 import { 
   HardDrive, 
@@ -197,11 +198,39 @@ export default function DashboardOverviewPage() {
               </button>
             </div>
 
-            <VideoPlayer
-              streamUrl={`https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4`}
-              filename={selectedVideo.name}
-              mimeType={selectedVideo.mime_type}
-            />
+            {(() => {
+              // Storage page ki selected key reuse karo (GET /v1/files/{id}/stream API key maangta hai)
+              let streamToken: string | null = null;
+              try {
+                const pid = currentProject?.project_id || currentProject?.id;
+                const savedKeyId = pid ? localStorage.getItem(`zg_storage_key_${pid}`) : null;
+                streamToken = getKeyMaterial(savedKeyId)?.plaintext || null;
+              } catch {
+                streamToken = null;
+              }
+
+              if (!streamToken) {
+                return (
+                  <div className="rounded-2xl liquid-glass border border-amber-500/30 bg-amber-500/5 p-6 text-center">
+                    <AlertCircle className="w-6 h-6 text-amber-400 mx-auto mb-2" />
+                    <p className="text-xs font-semibold text-amber-200">Stream preview ke liye API key chahiye</p>
+                    <p className="text-[11px] text-amber-100/70 mt-1 max-w-md mx-auto leading-relaxed">
+                      Backend GET /v1/files/&#123;id&#125;/stream par Bearer ZTG key maangta hai. Upload Object page
+                      par &quot;API Keys&quot; button se key select karke wapas aayein.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <VideoPlayer
+                  streamUrl={filesApi.getStreamUrl(selectedVideo.id)}
+                  filename={selectedVideo.name}
+                  mimeType={selectedVideo.mime_type}
+                  authToken={streamToken}
+                />
+              );
+            })()}
 
             <div className="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-xs font-mono text-slate-400">
               <span>File ID: {selectedVideo.id}</span>
