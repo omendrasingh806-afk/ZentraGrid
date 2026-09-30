@@ -7,9 +7,16 @@ interface VideoPlayerProps {
   streamUrl: string;
   filename: string;
   mimeType?: string;
+  /**
+   * Optional Bearer token (ZentraGrid API key).
+   * Browser ka <video> tag Authorization header nahi bhej sakta, isliye jab token
+   * diya ho toh hum endpoint (GET /v1/files/{id}/stream) se authenticated fetch
+   * karke blob → object URL se playback karte hain.
+   */
+  authToken?: string | null;
 }
 
-export default function VideoPlayer({ streamUrl, filename, mimeType }: VideoPlayerProps) {
+export default function VideoPlayer({ streamUrl, filename, mimeType, authToken }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
 
@@ -20,6 +27,49 @@ export default function VideoPlayer({ streamUrl, filename, mimeType }: VideoPlay
   const [isMuted, setIsMuted] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [buffering, setBuffering] = useState(false);
+
+  const [resolvedSrc, setResolvedSrc] = useState<string>(streamUrl);
+  const [fetchingStream, setFetchingStream] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
+
+  // Authenticated stream ko blob fetch karke object URL banao
+  useEffect(() => {
+    if (!authToken) {
+      setResolvedSrc(streamUrl);
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setFetchingStream(true);
+    setHasError(false);
+
+    fetch(streamUrl, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setResolvedSrc(objectUrl);
+        setFetchingStream(false);
+      })
+      .catch((err) => {
+        console.warn('Authenticated stream fetch error:', err);
+        if (!cancelled) {
+          setFetchingStream(false);
+          setHasError(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [streamUrl, authToken, retryTick]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -112,12 +162,23 @@ export default function VideoPlayer({ streamUrl, filename, mimeType }: VideoPlay
     <div className="relative rounded-2xl overflow-hidden liquid-glass border border-white/12 shadow-2xl bg-black group">
       {/* Video element */}
       <video
+        key={resolvedSrc}
         ref={videoRef}
-        src={streamUrl}
+        src={resolvedSrc}
         className="w-full aspect-video object-contain bg-black"
         onClick={togglePlay}
         playsInline
       />
+
+      {/* Authenticated blob fetch progress */}
+      {fetchingStream && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 gap-3 pointer-events-none">
+          <div className="w-10 h-10 border-2 border-[#FF4FD8] border-t-transparent rounded-full animate-spin" />
+          <span className="text-[10px] font-mono text-slate-300">
+            Fetching stream — GET /v1/files/{filename}/stream
+          </span>
+        </div>
+      )}
 
       {/* Buffering indicator */}
       {buffering && (
@@ -136,7 +197,11 @@ export default function VideoPlayer({ streamUrl, filename, mimeType }: VideoPlay
           </p>
           <button
             onClick={() => {
-              if (videoRef.current) {
+              if (authToken) {
+                // Authenticated flow: blob fetch ko dobara trigger karo
+                setResolvedSrc(streamUrl);
+                setRetryTick((t) => t + 1);
+              } else if (videoRef.current) {
                 videoRef.current.load();
                 setHasError(false);
               }
